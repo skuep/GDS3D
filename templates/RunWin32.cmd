@@ -7,6 +7,7 @@ SET XZOPT=-d
 SET BINDIR=win32
 SET GDS3DEXEC=GDS3D.exe
 SET BINDIR=%TARGETDIR%%BINDIR%
+SET XZDIR=
 
 REM Check file extension if we need to uncompress first
 FOR %%i IN ("%INPUTFILE%") DO SET FILENAME="%%~ni" & SET FILEEXT="%%~xi"
