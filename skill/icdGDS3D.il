@@ -24,13 +24,20 @@
 GDS3D_VERSION = "v1.8"
 	
 ; Path to the server where GDS3D is located (and where in the skill subfolder this file is located)
-GDS3D_SRC = "/cadappl/ictools/3D_viewer/GDS3D_1.8/"
+GDS3D_SRC = "~/devel/GDS3D_1.8/"
 	
 ; Path where temporary files are put (usually in the user's workdirectory)
 GDS3D_DST = "~/GDS3D/"
 
 ; Set to t to copy executables to workdirectory or to nil to leave the executables on the server	
 GDS3D_LOCAL_COPY = t  
+
+; Enable XZ compression
+; Note that for the server machine, xz command line tool has to be available in order to compress the gds
+; The server can provide the xzdec command line tool alongside the GDS3D binaries alongside the GDS3D binaries (e.g. for win32)
+; Otherwise the client has to have xzdec installed in the PATH variable
+; Currently only the win32 start script supports decompression
+GDS3D_USE_COMPRESSION = 1
 
 ;; Procedures which are loaded by typing load("<path_to_GDS3D_SRC>/skill/icdGDS3D.il") in your ICFB window in Cadence.
 procedure( icdRunGDS3D()
@@ -138,16 +145,31 @@ procedure(icdWriteGDS3D()
 		return(t);
 	)
 
-	; Output Win32 batch file
-	filename = strcat(GDS3D_DST "RunWin32.cmd")
-	runfile = outfile(filename)
-	if( runfile == nil then
-		printf(strcat("Error: could not write to " fileName "\n"))
-		return(t)
+	; Generate all runfiles
+	techFile = strcat("techfiles/" techname ".txt")
+	if( GDS3D_USE_COMPRESSION == 1 then 
+		inputFile = strcat("gds/" cellName ".xz")
+	else
+		inputFile = strcat("gds/" cellName ".gds")
 	)
-	fprintf(runfile strcat(GDS3D_TARGET "win32\\GDS3D.exe -p " GDS3D_TARGET "techfiles/" techname ".txt -i gds/" cellName ".gds"))
-	close(runfile)
 
+	templateFileNameList = getDirFiles(strcat(GDS3D_SRC "templates"))
+	foreach(templateFileName templateFileNameList 
+		if( isFile(strcat(GDS3D_SRC templateFileName)) then
+			; Load launch template file and fill in required dirs/files
+			templateFile = strcat(GDS3D_SRC "templates/" templateFileName)
+			runFile = strcat(GDS3D_DST templateFileName)
+			cmdLine = "sed 's|?INPUTFILE?|%s|g; s|?TECHFILE?|%s|g; s|?TARGETDIR?|%s|g; s|$|\\r|g' %s > %s"
+			sprintf(cmdLine cmdLine inputFile techFile GDS3D_TARGET templateFile runFile)
+			printf("Creating runfile %s\n" runFile)
+			ipcBeginProcess(cmdLine)
+		)
+	)
+
+	; TODO: The following generation of runfiles is the original part of the code
+	; It is planned to include templates in the templates-directory similar to the RunWin32.cmd
+	; And remove this part of the code. However, writing the templates is not an easy task so we
+	; will leave this for now
 	; Output Linux shell script
 	filename = strcat(GDS3D_DST "RunLinux.sh")
 	runfile = outfile(filename)
@@ -171,7 +193,9 @@ procedure(icdWriteGDS3D()
 	ipcBeginProcess(strcat("chmod +x " GDS3D_DST "RunMac.command\n")) ; Change to executable
 	
 	; Write GDS
-	gdsFile =  strcat(GDS3D_DST "gds/" cellName ".gds")
+	gdsFile = strcat("/tmp/" cellName ".gds")
+	dstDir = strcat(GDS3D_DST "gds")
+	;gdsFile =  strcat(GDS3D_DST "gds/" cellName ".gds")
 	printf("Writing GDS for %s/%s/%s to %s, please wait..\n" libName cellName viewName gdsFile)
 	; dbSave(geGetEditCellView()) ; How about read-only cells?
 	if( dbGetDatabaseType() == "CDBA" then
@@ -180,9 +204,27 @@ procedure(icdWriteGDS3D()
 		)
 	else
 		
-		ipcBeginProcess(strcat("strmout -library " libName " -flattenPcells -flattenVias -topCell " cellName " -view " viewName
+		gdsIpc = ipcBeginProcess(strcat("strmout -library " libName " -flattenPcells -flattenVias -topCell " cellName " -view " viewName
 		" -strmFile " gdsFile) "" nil error_handler 'icdNotifyDone strcat(GDS3D_DST "GDS3D.log"))
+		
+		ipcWait(gdsIpc)
 	)
+	
+	if( GDS3D_USE_COMPRESSION == 1 then
+		; Compress temporary file if desired
+		zipFile = strcat(dstDir "/" cellName ".xz")
+		cmdLine = strcat("xz -9 -c " gdsFile " > " zipFile)
+		printf(strcat("Compressing " gdsFile " to " zipFile "...\n"))
+	else
+		; Otherwise just copy
+		dstFile = strcat(dstDir "/" cellName ".gds")
+		cmdLine = strcat("cp -f " gdsFile " " dstFile)
+		printf(strcat("Copying " gdsFile " to " dstFile "...\n"))
+	)
+
+	copyCompressIpc = ipcBeginProcess(cmdLine)
+	ipcWait(copyCompressIpc)
+	printf("Done\n")
 	
 	else
 	  printf("Please open a layout cellview!\n")
