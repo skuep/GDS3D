@@ -34,10 +34,11 @@ GDS3D_LOCAL_COPY = t
 
 ; Enable XZ compression
 ; Note that for the server machine, xz command line tool has to be available in order to compress the gds
-; The server can provide the xzdec command line tool alongside the GDS3D binaries alongside the GDS3D binaries (e.g. for win32)
+; The server can provide the xzdec command line tool alongside the GDS3D binaries to clients (e.g. for win32)
 ; Otherwise the client has to have xzdec installed in the PATH variable
 ; Currently only the win32 start script supports decompression
-GDS3D_USE_COMPRESSION = 1
+GDS3D_COMPRESSION_ENABLED = 1
+GDS3D_COMPRESSION_AGENT = "xz -9 -c"
 
 ;; Procedures which are loaded by typing load("<path_to_GDS3D_SRC>/skill/icdGDS3D.il") in your ICFB window in Cadence.
 procedure( icdRunGDS3D()
@@ -147,7 +148,7 @@ procedure(icdWriteGDS3D()
 
 	; Generate all runfiles
 	techFile = strcat("techfiles/" techname ".txt")
-	if( GDS3D_USE_COMPRESSION == 1 then 
+	if( GDS3D_COMPRESSION_ENABLED == 1 then 
 		inputFile = strcat("gds/" cellName ".xz")
 	else
 		inputFile = strcat("gds/" cellName ".gds")
@@ -192,10 +193,9 @@ procedure(icdWriteGDS3D()
 	close(runfile)
 	ipcBeginProcess(strcat("chmod +x " GDS3D_DST "RunMac.command\n")) ; Change to executable
 	
-	; Write GDS
-	gdsFile = strcat("/tmp/" cellName ".gds")
+	; Write GDS to a temporary file
+	gdsFile = strcat(getTempDir() "/GDS3D-" getLogin() "-" cellName ".gds")
 	dstDir = strcat(GDS3D_DST "gds")
-	;gdsFile =  strcat(GDS3D_DST "gds/" cellName ".gds")
 	printf("Writing GDS for %s/%s/%s to %s, please wait..\n" libName cellName viewName gdsFile)
 	; dbSave(geGetEditCellView()) ; How about read-only cells?
 	if( dbGetDatabaseType() == "CDBA" then
@@ -210,13 +210,13 @@ procedure(icdWriteGDS3D()
 		ipcWait(gdsIpc)
 	)
 	
-	if( GDS3D_USE_COMPRESSION == 1 then
+	if( GDS3D_COMPRESSION_ENABLED == 1 then
 		; Compress temporary file if desired
-		zipFile = strcat(dstDir "/" cellName ".xz")
-		cmdLine = strcat("xz -9 -c " gdsFile " > " zipFile)
-		printf(strcat("Compressing " gdsFile " to " zipFile "...\n"))
+		dstFile = strcat(dstDir "/" cellName ".xz")
+		cmdLine = strcat(GDS3D_COMPRESSION_AGENT " " gdsFile " > " dstFile)
+		printf(strcat("Compressing " gdsFile " to " dstFile "...\n"))
 	else
-		; Otherwise just copy
+		; Otherwise just copy to target directory
 		dstFile = strcat(dstDir "/" cellName ".gds")
 		cmdLine = strcat("cp -f " gdsFile " " dstFile)
 		printf(strcat("Copying " gdsFile " to " dstFile "...\n"))
@@ -225,7 +225,10 @@ procedure(icdWriteGDS3D()
 	copyCompressIpc = ipcBeginProcess(cmdLine)
 	ipcWait(copyCompressIpc)
 	printf("Done\n")
-	
+
+	printf("Removing temporary files\n")
+	ipcBeginProcess(strcat("rm -f "	gdsFile))
+
 	else
 	  printf("Please open a layout cellview!\n")
 	);else
